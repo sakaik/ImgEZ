@@ -7,8 +7,8 @@ import time
 # バージョン情報
 VERSION = {
     'major': 1,
-    'minor': 0,
-    'patch': 1
+    'minor': 1,
+    'patch': 0
 }
 VERSION_STR = f"{VERSION['major']}.{VERSION['minor']}.{VERSION['patch']}"
 
