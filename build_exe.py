@@ -4,14 +4,24 @@ import subprocess
 from datetime import datetime
 import time
 
+# バージョン情報
+VERSION = {
+    'major': 1,
+    'minor': 0,
+    'patch': 1
+}
+VERSION_STR = f"{VERSION['major']}.{VERSION['minor']}.{VERSION['patch']}"
+
 def create_version_info():
     """バージョン情報ファイルを作成"""
     version_file = 'version_info.txt'
+    version_tuple = (VERSION['major'], VERSION['minor'], VERSION['patch'], 0)
+    
     with open(version_file, 'w', encoding='utf-8') as f:
         f.write(f'VSVersionInfo(\n')
         f.write(f'  ffi=FixedFileInfo(\n')
-        f.write(f'    filevers=(1, 0, 0, 0),\n')
-        f.write(f'    prodvers=(1, 0, 0, 0),\n')
+        f.write(f'    filevers={version_tuple},\n')
+        f.write(f'    prodvers={version_tuple},\n')
         f.write(f'    mask=0x3f,\n')
         f.write(f'    flags=0x0,\n')
         f.write(f'    OS=0x40004,\n')
@@ -25,12 +35,12 @@ def create_version_info():
         f.write(f'      StringTable(\n')
         f.write(f'        u\'040904B0\',\n')
         f.write(f'        [StringStruct(u\'FileDescription\', u\'ImgEZ Image Trimming Tool\'),\n')
-        f.write(f'         StringStruct(u\'FileVersion\', u\'1.0.0\'),\n')
+        f.write(f'         StringStruct(u\'FileVersion\', u\'{VERSION_STR}\'),\n')
         f.write(f'         StringStruct(u\'InternalName\', u\'ImgEZ\'),\n')
-        f.write(f'         StringStruct(u\'LegalCopyright\', u\'Copyright (c) 2024\'),\n')
+        f.write(f'         StringStruct(u\'LegalCopyright\', u\'Copyright (c) sakaik 2024\'),\n')
         f.write(f'         StringStruct(u\'OriginalFilename\', u\'ImgEZ.exe\'),\n')
         f.write(f'         StringStruct(u\'ProductName\', u\'ImgEZ\'),\n')
-        f.write(f'         StringStruct(u\'ProductVersion\', u\'1.0.0\')])\n')
+        f.write(f'         StringStruct(u\'ProductVersion\', u\'{VERSION_STR}\')])\n')
         f.write(f'      ]), \n')
         f.write(f'    VarFileInfo([VarStruct(u\'Translation\', [1033, 1200])])\n')
         f.write(f'  ]\n')
@@ -55,6 +65,8 @@ def safe_remove(path, retries=3, delay=1.0):
 
 def build_exe():
     """EXEファイルをビルド"""
+    print(f'ImgEZ バージョン {VERSION_STR} のビルドを開始します...')
+    
     # releaseディレクトリを作成
     release_dir = 'release'
     if not os.path.exists(release_dir):
@@ -107,7 +119,7 @@ def build_exe():
         safe_remove('dist')
     if os.path.exists('ImgEZ.spec'):
         safe_remove('ImgEZ.spec')
-    print('ビルド完了')
+    print(f'ビルド完了（バージョン {VERSION_STR}）')
 
 if __name__ == '__main__':
     build_exe() 

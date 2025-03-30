@@ -7,12 +7,66 @@ from PyQt5.QtCore import Qt, QPoint, QRect, QSize, QEvent, QPointF
 from PyQt5.QtGui import QPixmap, QPainter, QPen, QColor, QImage, QCursor, QIcon, QClipboard
 import os
 import argparse
+from PIL import Image, ExifTags
+from io import BytesIO
 
 # PyQt5の非推奨警告を抑制
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # アイコンのパスを定義
 ICONS_DIR = os.path.join(os.path.dirname(__file__), 'icons')
+
+def fix_image_rotation(image_path):
+    """EXIF情報に基づいて画像を適切な向きに回転"""
+    try:
+        image = Image.open(image_path)
+        
+        # 画像フォーマットを取得（拡張子から）
+        format_ext = os.path.splitext(image_path)[1].lower()
+        if format_ext.startswith('.'):
+            format_ext = format_ext[1:]  # 先頭の'.'を削除
+        
+        # フォーマットのマッピング
+        format_map = {
+            'jpg': 'JPEG',
+            'jpeg': 'JPEG',
+            'png': 'PNG',
+            'gif': 'GIF',
+            'bmp': 'BMP'
+        }
+        image_format = format_map.get(format_ext, 'PNG')  # 不明な場合はPNGとして扱う
+        
+        # EXIF情報を取得
+        try:
+            for orientation in ExifTags.TAGS.keys():
+                if ExifTags.TAGS[orientation] == 'Orientation':
+                    break
+            exif = dict(image._getexif().items())
+            
+            if orientation in exif:
+                if exif[orientation] == 3:
+                    image = image.rotate(180, expand=True)
+                elif exif[orientation] == 6:
+                    image = image.rotate(270, expand=True)
+                elif exif[orientation] == 8:
+                    image = image.rotate(90, expand=True)
+                
+                # 回転した画像をバイト列に変換
+                byte_array = BytesIO()
+                image.save(byte_array, format=image_format)
+                byte_array = byte_array.getvalue()
+                
+                # QPixmapに変換
+                q_image = QImage.fromData(byte_array)
+                return QPixmap.fromImage(q_image)
+        except (AttributeError, KeyError, IndexError):
+            # EXIF情報がない場合は元の画像を返す
+            pass
+    except Exception as e:
+        print(f"画像の回転処理中にエラーが発生しました: {e}")
+    
+    # エラーが発生した場合や回転が不要な場合は元のQPixmapを返す
+    return QPixmap(image_path)
 
 class ImageLabel(QLabel):
     EDGE_THRESHOLD = 5  # エッジ検出の閾値（ピクセル）
@@ -142,13 +196,12 @@ class ImageLabel(QLabel):
     def update_coord_display(self):
         if self.coord_callback:
             if self.rel_start_pos and self.rel_end_pos and self.original_pixmap:
-                # 選択範囲の左上座標を計算（画像内の座標）
-                image_x = max(0, int(self.rel_start_pos.x() * self.original_pixmap.width()))
-                image_y = max(0, int(self.rel_start_pos.y() * self.original_pixmap.height()))
-                
-                # 選択範囲のサイズを計算
+                # 選択範囲の座標を取得
                 rect = self.get_selection_rect()
                 if rect:
+                    # 左上座標を取得
+                    image_x = rect.x()
+                    image_y = rect.y()
                     size_text = f" | W: {rect.width()}, H: {rect.height()}"
                     self.coord_callback(image_pos=(image_x, image_y), size=size_text)
                 else:
@@ -532,14 +585,19 @@ class ImageLabel(QLabel):
     def dropEvent(self, event):
         files = [u.toLocalFile() for u in event.mimeData().urls()]
         for file_path in files:
-            if file_path.lower().endswith('.jpg'):
+            if file_path.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp', '.gif')):
                 self.load_image(file_path)
+                # タイトルバーを更新
+                parent = self.window()
+                if parent:
+                    base_name = os.path.basename(file_path)
+                    parent.setWindowTitle(f"{base_name} - ImgEZ")
                 break
 
     def load_image(self, image_path):
         """画像を読み込む"""
         self.image_path = image_path
-        self.original_pixmap = QPixmap(image_path)
+        self.original_pixmap = fix_image_rotation(image_path)
         self.scale_factor = 1.0
         
         # 履歴を空にしてから、現在の画像を最初の履歴として追加
@@ -553,10 +611,20 @@ class ImageLabel(QLabel):
 
     def update_scaled_pixmap(self):
         if self.original_pixmap:
+            # 余白のサイズを定義
+            MARGIN_LEFT = 10
+            MARGIN_RIGHT = 10
+            MARGIN_TOP = 10
+            
+            # 余白を考慮したラベルサイズを計算
             label_size = self.size()
+            available_width = label_size.width() - (MARGIN_LEFT + MARGIN_RIGHT)
+            available_height = label_size.height() - MARGIN_TOP
+            
+            # 利用可能な領域に合わせて画像をスケーリング
             scaled_pixmap = self.original_pixmap.scaled(
-                label_size.width(),
-                label_size.height(),
+                available_width,
+                available_height,
                 Qt.KeepAspectRatio,
                 Qt.SmoothTransformation
             )
@@ -568,16 +636,16 @@ class ImageLabel(QLabel):
                 scaled_size.height() / original_size.height()
             )
             
-            # 画像の表示位置を中央に設定
-            x = (label_size.width() - scaled_pixmap.width()) // 2
-            y = (label_size.height() - scaled_pixmap.height()) // 2
+            # 画像の表示位置を設定（左右と上部に余白を追加）
+            x = MARGIN_LEFT + (available_width - scaled_pixmap.width()) // 2
+            y = MARGIN_TOP + (available_height - scaled_pixmap.height()) // 2
             self.current_pixmap_rect = QRect(x, y, scaled_pixmap.width(), scaled_pixmap.height())
             
             # 中央に配置するために空のピクセルマップを作成
             centered_pixmap = QPixmap(label_size)
             centered_pixmap.fill(Qt.transparent)
             
-            # 空のピクセルマップに画像を中央に描画
+            # 空のピクセルマップに画像を描画
             painter = QPainter(centered_pixmap)
             painter.drawPixmap(x, y, scaled_pixmap)
             painter.end()
@@ -653,7 +721,7 @@ class ImageLabel(QLabel):
 
     def reset_to_original(self):
         """最初の状態に戻す"""
-        if len(self.history) > 0:
+        if len(self.history) > 0:  # 履歴が存在する場合
             # 最初の履歴を保持
             first_image = self.history[0].copy()
             
@@ -917,7 +985,7 @@ class MainWindow(QMainWindow):
 
     def update_coord_display(self, image_pos=None, size=""):
         if image_pos:
-            coord_text = f"選択範囲: ({image_pos[0]}, {image_pos[1]}){size}"
+            coord_text = f"XY: ({image_pos[0]}, {image_pos[1]}){size}"
             self.coord_label.setText(coord_text)
         else:
             self.coord_label.clear()
@@ -931,6 +999,9 @@ class MainWindow(QMainWindow):
         )
         if file_name:
             self.image_label.load_image(file_name)
+            # タイトルバーを更新
+            base_name = os.path.basename(file_name)
+            self.setWindowTitle(f"{base_name} - ImgEZ")
 
     def save_image(self):
         if not self.image_label.pixmap():
@@ -993,6 +1064,8 @@ class MainWindow(QMainWindow):
         
         if self.image_label.reset_to_original():
             self.statusBar.showMessage("最初の状態に戻しました", 2000)
+            # タイトルバーを元に戻す
+            self.setWindowTitle("ImgEZ")
         else:
             self.statusBar.showMessage("これ以上戻せません", 2000)
 

@@ -43,6 +43,5 @@ build/
 dist/
 version_info.txt
 
-# Keep release directory but ignore exe files
-release/*
-!release/.gitkeep 
+# Keep release directory and ImgEZ.exe
+!release/ImgEZ.exe 
