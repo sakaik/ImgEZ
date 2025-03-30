@@ -2,13 +2,14 @@ import sys
 import warnings
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QLabel, QPushButton, 
                            QVBoxLayout, QHBoxLayout, QWidget, QFileDialog, QSizePolicy, QStatusBar, QToolBar, QAction, QMessageBox,
-                           QDialog, QScrollArea, QGridLayout)
-from PyQt5.QtCore import Qt, QPoint, QRect, QSize, QEvent, QPointF
-from PyQt5.QtGui import QPixmap, QPainter, QPen, QColor, QImage, QCursor, QIcon, QClipboard
+                           QDialog, QScrollArea, QGridLayout, QLineEdit, QRadioButton, QButtonGroup, QDialogButtonBox)
+from PyQt5.QtCore import Qt, QPoint, QRect, QSize, QEvent, QPointF, QByteArray, QBuffer
+from PyQt5.QtGui import QPixmap, QPainter, QPen, QColor, QImage, QCursor, QIcon, QClipboard, QDoubleValidator, QTransform
 import os
 import argparse
 from PIL import Image, ExifTags
 from io import BytesIO
+import math
 
 # PyQt5の非推奨警告を抑制
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -67,6 +68,57 @@ def fix_image_rotation(image_path):
     
     # エラーが発生した場合や回転が不要な場合は元のQPixmapを返す
     return QPixmap(image_path)
+
+class RotateDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("画像を回転")
+        self.setModal(True)
+        
+        # レイアウトの作成
+        layout = QVBoxLayout()
+        
+        # 回転方向の選択
+        direction_layout = QHBoxLayout()
+        self.direction_group = QButtonGroup(self)
+        self.left_radio = QRadioButton("左回り")
+        self.right_radio = QRadioButton("右回り")
+        self.right_radio.setChecked(True)  # デフォルトは右回り
+        self.direction_group.addButton(self.left_radio)
+        self.direction_group.addButton(self.right_radio)
+        direction_layout.addWidget(self.left_radio)
+        direction_layout.addWidget(self.right_radio)
+        layout.addLayout(direction_layout)
+        
+        # 角度入力
+        angle_layout = QHBoxLayout()
+        angle_layout.addWidget(QLabel("角度:"))
+        self.angle_input = QLineEdit()
+        self.angle_input.setValidator(QDoubleValidator(0.0, 360.0, 2))  # 0.0-360.0の範囲で小数点2桁まで
+        self.angle_input.setText("90.0")  # デフォルト値
+        angle_layout.addWidget(self.angle_input)
+        angle_layout.addWidget(QLabel("度"))
+        layout.addLayout(angle_layout)
+        
+        # OKとキャンセルボタン
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel,
+            Qt.Horizontal, self)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        
+        self.setLayout(layout)
+    
+    def get_rotation_angle(self):
+        """回転角度を取得（正の値が右回り）"""
+        try:
+            angle = float(self.angle_input.text())
+            if self.left_radio.isChecked():
+                angle = -angle
+            return angle
+        except ValueError:
+            return 0.0
 
 class ImageLabel(QLabel):
     EDGE_THRESHOLD = 5  # エッジ検出の閾値（ピクセル）
@@ -780,6 +832,49 @@ class ImageLabel(QLabel):
         # 現在表示中の画像を保存
         return self.original_pixmap.save(file_name)
 
+    def rotate_image(self, angle):
+        """画像を指定された角度だけ回転"""
+        if not self.original_pixmap:
+            return False
+        
+        # 回転後の画像全体が表示されるサイズを計算
+        rad_angle = math.radians(abs(angle))
+        sin_a = abs(math.sin(rad_angle))
+        cos_a = abs(math.cos(rad_angle))
+        img_width = self.original_pixmap.width()
+        img_height = self.original_pixmap.height()
+        new_width = int(img_width * cos_a + img_height * sin_a)
+        new_height = int(img_width * sin_a + img_height * cos_a)
+        
+        # 新しいピクセルマップを作成（透明な背景）
+        rotated = QPixmap(new_width, new_height)
+        rotated.fill(Qt.transparent)
+        
+        # 回転を実行
+        painter = QPainter(rotated)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        
+        # 画像を中央に配置して回転
+        transform = QTransform()
+        transform.translate(new_width/2, new_height/2)
+        transform.rotate(angle)
+        transform.translate(-img_width/2, -img_height/2)
+        
+        painter.setTransform(transform)
+        painter.drawPixmap(0, 0, self.original_pixmap)
+        painter.end()
+        
+        # 履歴に追加
+        self.history.append(rotated)
+        self.history_index = len(self.history) - 1
+        
+        # 画像を更新
+        self.original_pixmap = rotated
+        self.clear_selection()
+        self.update_scaled_pixmap()
+        return True
+
 class HistoryDialog(QDialog):
     """履歴表示用のダイアログ"""
     def __init__(self, history, parent=None):
@@ -876,11 +971,27 @@ class MainWindow(QMainWindow):
         else:
             self.undo_action.setIcon(self.style().standardIcon(self.style().SP_ArrowBack))
         
-        # 最初に戻す (Ctrl+R)
+        # 回転 (Ctrl+R)
+        self.rotate_action = QAction("回転", self)
+        self.rotate_action.setShortcut("Ctrl+R")
+        self.rotate_action.triggered.connect(self.rotate_image)
+        rotate_icon_path = os.path.join(ICONS_DIR, 'rotate.svg')
+        if os.path.exists(rotate_icon_path):
+            self.rotate_action.setIcon(QIcon(rotate_icon_path))
+        else:
+            # SP_BrowserReloadを使用（時計回りの矢印アイコン）
+            self.rotate_action.setIcon(self.style().standardIcon(self.style().SP_BrowserReload))
+        
+        # 最初に戻す (Ctrl+Alt+R)
         self.reset_action = QAction("最初に戻す", self)
-        self.reset_action.setShortcut("Ctrl+R")
+        self.reset_action.setShortcut("Ctrl+Alt+R")
         self.reset_action.triggered.connect(self.reset_to_original)
-        self.reset_action.setIcon(self.style().standardIcon(self.style().SP_BrowserReload))
+        reset_icon_path = os.path.join(ICONS_DIR, 'reset.svg')
+        if os.path.exists(reset_icon_path):
+            self.reset_action.setIcon(QIcon(reset_icon_path))
+        else:
+            # フォールバックアイコンとしてSP_DialogApplyButtonを使用
+            self.reset_action.setIcon(self.style().standardIcon(self.style().SP_DialogApplyButton))
         
         # トリミング (Ctrl+T)
         self.trim_action = QAction("トリミング", self)
@@ -940,6 +1051,7 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(self.copy_action)
         edit_menu.addAction(self.undo_action)
         edit_menu.addAction(self.reset_action)
+        edit_menu.addAction(self.rotate_action)
         edit_menu.addSeparator()
         edit_menu.addAction(self.trim_action)
         edit_menu.addAction(self.clear_action)
@@ -952,7 +1064,7 @@ class MainWindow(QMainWindow):
         toolbar.setToolButtonStyle(Qt.ToolButtonIconOnly)
         
         # ファイル操作
-        self.open_action.setToolTip("開く")  # ツールチップを設定
+        self.open_action.setToolTip("開く")
         toolbar.addAction(self.open_action)
         
         self.save_action.setToolTip("保存")
@@ -969,6 +1081,10 @@ class MainWindow(QMainWindow):
         self.reset_action.setToolTip("最初に戻す")
         toolbar.addAction(self.reset_action)
         toolbar.addSeparator()
+        
+        # 回転操作
+        self.rotate_action.setToolTip("回転")
+        toolbar.addAction(self.rotate_action)
         
         # トリミング操作
         self.trim_action.setToolTip("トリミング")
@@ -1077,6 +1193,20 @@ class MainWindow(QMainWindow):
         
         dialog = HistoryDialog(self.image_label.history, self)
         dialog.exec_()
+
+    def rotate_image(self):
+        """画像を回転"""
+        if not self.image_label.pixmap():
+            QMessageBox.warning(self, "警告", "回転する画像がありません。")
+            return
+        
+        dialog = RotateDialog(self)
+        if dialog.exec_() == QDialog.Accepted:
+            angle = dialog.get_rotation_angle()
+            if self.image_label.rotate_image(angle):
+                self.statusBar.showMessage(f"画像を{abs(angle)}度{'左' if angle < 0 else '右'}に回転しました", 2000)
+            else:
+                self.statusBar.showMessage("画像の回転に失敗しました", 2000)
 
 def main():
     # コマンドライン引数のパース
