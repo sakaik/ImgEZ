@@ -20,6 +20,13 @@ wheels/
 .installed.cfg
 *.egg
 
+# Virtual Environment
+venv/
+env/
+ENV/
+.env/
+.venv/
+
 # IDE
 .idea/
 .vscode/
@@ -28,4 +35,14 @@ wheels/
 
 # OS
 .DS_Store
-Thumbs.db 
+Thumbs.db
+
+# PyInstaller
+*.spec
+build/
+dist/
+version_info.txt
+
+# Keep release directory but ignore exe files
+release/*
+!release/.gitkeep 
