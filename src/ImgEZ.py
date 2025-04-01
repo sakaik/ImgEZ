@@ -387,10 +387,6 @@ class ImageLabel(QLabel):
                     x_offset = (self.current_pixmap_rect.width() - new_width) // 2
                     actual_rect.setLeft(self.current_pixmap_rect.left() + x_offset)
                     actual_rect.setWidth(new_width)
-                
-                # 画像の実際の表示領域外のクリックは無視
-                if not actual_rect.contains(pos):
-                    return
             
             edge_type = self.get_edge_at_position(pos)
             if edge_type != self.EdgeType.NONE:
@@ -399,18 +395,30 @@ class ImageLabel(QLabel):
                 self.is_negative_resize = False
                 self.original_edge_pos = None
             else:
-                # 既存の選択範囲がある場合、その外側をクリックした場合の処理
+                # 既存の選択範囲がある場合の処理
                 current_rect = self.get_current_rect()
-                if current_rect and not current_rect.contains(pos):
-                    self.clear_selection()
-                    self.update()
-                    # クリック位置から新しい選択範囲の作成を開始
-                    rel_pos = self.to_relative_pos(pos)
-                    if rel_pos:
-                        self.rel_start_pos = rel_pos
-                        self.rel_end_pos = rel_pos
-                        self.is_drawing = True
-                    return
+                if current_rect:
+                    # 選択範囲内をクリックした場合は移動モード
+                    if current_rect.contains(pos):
+                        self.resize_edge = self.EdgeType.MOVE
+                        self.is_resizing = True
+                        return
+                    
+                    # 選択範囲外をクリックした場合
+                    if not current_rect.contains(pos):
+                        # 画像の表示領域内でのクリックの場合のみ選択範囲をクリア
+                        if actual_rect.contains(pos):
+                            self.clear_selection()
+                            self.update()
+                            # クリック位置から新しい選択範囲の作成を開始
+                            rel_pos = self.to_relative_pos(pos)
+                            if rel_pos:
+                                self.rel_start_pos = rel_pos
+                                self.rel_end_pos = rel_pos
+                                self.is_drawing = True
+                            return
+                        else:
+                            return
                 
                 # 新しい選択範囲の作成
                 rel_pos = self.to_relative_pos(pos)
@@ -426,100 +434,51 @@ class ImageLabel(QLabel):
         adjusted_delta = QPoint(delta.x(), delta.y())
         is_min_size = False
         
-        if edge_type == self.EdgeType.LEFT:
-            new_left = rect.left() + delta.x()
-            if new_left > rect.right() - self.MIN_SIZE:
-                adjusted_delta.setX(rect.right() - self.MIN_SIZE - rect.left())
-                new_left = rect.right() - self.MIN_SIZE
-                is_min_size = True
-            if not self.is_negative_resize:
-                new_rect.setLeft(new_left)
+        # 画像の実際の表示領域を計算
+        if self.original_pixmap:
+            original_aspect = self.original_pixmap.width() / self.original_pixmap.height()
+            current_aspect = self.current_pixmap_rect.width() / self.current_pixmap_rect.height()
+            
+            actual_rect = QRect(self.current_pixmap_rect)
+            if original_aspect > current_aspect:
+                new_height = int(self.current_pixmap_rect.width() / original_aspect)
+                y_offset = (self.current_pixmap_rect.height() - new_height) // 2
+                actual_rect.setTop(self.current_pixmap_rect.top() + y_offset)
+                actual_rect.setHeight(new_height)
+            else:
+                new_width = int(self.current_pixmap_rect.height() * original_aspect)
+                x_offset = (self.current_pixmap_rect.width() - new_width) // 2
+                actual_rect.setLeft(self.current_pixmap_rect.left() + x_offset)
+                actual_rect.setWidth(new_width)
         
-        elif edge_type == self.EdgeType.RIGHT:
-            new_right = rect.right() + delta.x()
-            if new_right < rect.left() + self.MIN_SIZE:
-                adjusted_delta.setX(rect.left() + self.MIN_SIZE - rect.right())
-                new_right = rect.left() + self.MIN_SIZE
-                is_min_size = True
-            if not self.is_negative_resize:
-                new_rect.setRight(new_right)
-        
-        elif edge_type == self.EdgeType.TOP:
-            new_top = rect.top() + delta.y()
-            if new_top > rect.bottom() - self.MIN_SIZE:
-                adjusted_delta.setY(rect.bottom() - self.MIN_SIZE - rect.top())
-                new_top = rect.bottom() - self.MIN_SIZE
-                is_min_size = True
-            if not self.is_negative_resize:
-                new_rect.setTop(new_top)
-        
-        elif edge_type == self.EdgeType.BOTTOM:
-            new_bottom = rect.bottom() + delta.y()
-            if new_bottom < rect.top() + self.MIN_SIZE:
-                adjusted_delta.setY(rect.top() + self.MIN_SIZE - rect.bottom())
-                new_bottom = rect.top() + self.MIN_SIZE
-                is_min_size = True
-            if not self.is_negative_resize:
-                new_rect.setBottom(new_bottom)
-        
-        elif edge_type == self.EdgeType.TOP_LEFT:
-            new_left = rect.left() + delta.x()
-            new_top = rect.top() + delta.y()
-            if new_left > rect.right() - self.MIN_SIZE:
-                adjusted_delta.setX(rect.right() - self.MIN_SIZE - rect.left())
-                new_left = rect.right() - self.MIN_SIZE
-                is_min_size = True
-            if new_top > rect.bottom() - self.MIN_SIZE:
-                adjusted_delta.setY(rect.bottom() - self.MIN_SIZE - rect.top())
-                new_top = rect.bottom() - self.MIN_SIZE
-                is_min_size = True
-            if not self.is_negative_resize:
-                new_rect.setTopLeft(QPoint(new_left, new_top))
-        
-        elif edge_type == self.EdgeType.TOP_RIGHT:
-            new_right = rect.right() + delta.x()
-            new_top = rect.top() + delta.y()
-            if new_right < rect.left() + self.MIN_SIZE:
-                adjusted_delta.setX(rect.left() + self.MIN_SIZE - rect.right())
-                new_right = rect.left() + self.MIN_SIZE
-                is_min_size = True
-            if new_top > rect.bottom() - self.MIN_SIZE:
-                adjusted_delta.setY(rect.bottom() - self.MIN_SIZE - rect.top())
-                new_top = rect.bottom() - self.MIN_SIZE
-                is_min_size = True
-            if not self.is_negative_resize:
-                new_rect.setTopRight(QPoint(new_right, new_top))
-        
-        elif edge_type == self.EdgeType.BOTTOM_LEFT:
-            new_left = rect.left() + delta.x()
-            new_bottom = rect.bottom() + delta.y()
-            if new_left > rect.right() - self.MIN_SIZE:
-                adjusted_delta.setX(rect.right() - self.MIN_SIZE - rect.left())
-                new_left = rect.right() - self.MIN_SIZE
-                is_min_size = True
-            if new_bottom < rect.top() + self.MIN_SIZE:
-                adjusted_delta.setY(rect.top() + self.MIN_SIZE - rect.bottom())
-                new_bottom = rect.top() + self.MIN_SIZE
-                is_min_size = True
-            if not self.is_negative_resize:
-                new_rect.setBottomLeft(QPoint(new_left, new_bottom))
-        
-        elif edge_type == self.EdgeType.BOTTOM_RIGHT:
-            new_right = rect.right() + delta.x()
-            new_bottom = rect.bottom() + delta.y()
-            if new_right < rect.left() + self.MIN_SIZE:
-                adjusted_delta.setX(rect.left() + self.MIN_SIZE - rect.right())
-                new_right = rect.left() + self.MIN_SIZE
-                is_min_size = True
-            if new_bottom < rect.top() + self.MIN_SIZE:
-                adjusted_delta.setY(rect.top() + self.MIN_SIZE - rect.bottom())
-                new_bottom = rect.top() + self.MIN_SIZE
-                is_min_size = True
-            if not self.is_negative_resize:
-                new_rect.setBottomRight(QPoint(new_right, new_bottom))
-        
-        elif edge_type == self.EdgeType.MOVE:
+        if edge_type == self.EdgeType.MOVE:
+            # 移動時の処理を改善
             new_rect.translate(delta)
+            
+            # 画像の表示領域内に制限
+            if self.original_pixmap:
+                # 左端の制限
+                if new_rect.left() < actual_rect.left():
+                    new_rect.moveLeft(actual_rect.left())
+                # 右端の制限
+                if new_rect.right() > actual_rect.right():
+                    new_rect.moveRight(actual_rect.right())
+                # 上端の制限
+                if new_rect.top() < actual_rect.top():
+                    new_rect.moveTop(actual_rect.top())
+                # 下端の制限
+                if new_rect.bottom() > actual_rect.bottom():
+                    new_rect.moveBottom(actual_rect.bottom())
+            
+            # 選択範囲が画像の表示領域内に完全に含まれているか確認
+            if not actual_rect.contains(new_rect.topLeft()) or not actual_rect.contains(new_rect.bottomRight()):
+                return rect, QPoint(0, 0), is_min_size
+            
+            # 選択範囲が画像の表示領域内に完全に含まれている場合のみ、移動を適用
+            if actual_rect.contains(new_rect.topLeft()) and actual_rect.contains(new_rect.bottomRight()):
+                return new_rect, adjusted_delta, is_min_size
+            else:
+                return rect, QPoint(0, 0), is_min_size
         
         return new_rect, adjusted_delta, is_min_size
 
